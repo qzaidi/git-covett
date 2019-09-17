@@ -6,6 +6,7 @@
  * @param {import('probot').Application} app
  */
 module.exports = app => {
+
   // Opens a PR every time someone installs your app for the first time
   app.on('installation.created', check)
   async function check (context) {
@@ -64,4 +65,15 @@ module.exports = app => {
 
   // To get your app running against GitHub, see:
   // https://probot.github.io/docs/development/
+  const refresh = async () => {
+		// Authenticate the application and get all of its installations
+		const githubApp = await app.auth();
+		const installations = await githubApp.apps.listInstallations();
+    console.log(installations);
+
+    // now do whatever you want to do with the existing installations, including auth etc
+
+	};
+
+  refresh();
 }
