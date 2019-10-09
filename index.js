@@ -1,65 +1,48 @@
-// Git Data API use case example
-// See: https://developer.github.com/v3/git/ to learn more
+const repos = require('./repos')
+const probotKit = require('probot-kit')
 
-/**
- * This is the main entrypoint to your Probot app
- * @param {import('probot').Application} app
- */
 module.exports = app => {
 
-  // Opens a PR every time someone installs your app for the first time
   app.on('installation.created', check)
+
   async function check (context) {
+    // this runs only for the first time on each new installation
     // shows all repos you've installed the app on
     context.log("going to list repositories")
     console.log(context.payload.repositories)
 
     const owner = context.payload.installation.account.login
     context.payload.repositories.forEach(async (repository) => {
-      context.log("processing repositories")
+      context.log("processing repository", repository.name)
       const repo = repository.name
-
-      // Generates a random number to ensure the git reference isn't already taken
-      // NOTE: this is not recommended and just shows an example so it can work :)
-
-      // test
-      const branch = `new-branch-${Math.floor(Math.random() * 9999)}`
-
-      // Get current reference in Git
-      const reference = await context.github.gitdata.getReference({
-        repo, // the repo
-        owner, // the owner of the repo
-        ref: 'heads/master'
-      })
-      // Create a branch
-      await context.github.gitdata.createReference({
-        repo,
-        owner,
-        ref: `refs/heads/${branch}`,
-        sha: reference.data.object.sha // accesses the sha from the heads/master reference we got
-      })
-      // create a new file
-      await context.github.repos.createFile({
-        repo,
-        owner,
-        path: 'path/to/your/file.md', // the path to your config file
-        message: 'adds config file', // a commit message
-        content: Buffer.from('My new file is awesome!').toString('base64'),
-        // the content of your file, must be base64 encoded
-        branch // the branch name we used when creating a Git reference
-      })
-      // create a PR from that branch with the commit of our added file
-      await context.github.pullRequests.create({
-        repo,
-        owner,
-        title: 'Adding my file!', // the title of the PR
-        head: branch, // the branch our chances are on
-        base: 'master', // the branch to which you want to merge your changes
-        body: 'Adds my new file!', // the body of your PR,
-        maintainer_can_modify: true // allows maintainers to edit your app's PR
-      })
     })
   }
+
+   app.on('push', async context => {
+    // Code was pushed to the repo, what should we do with it?
+    const commitSha = probotKit.getSha(context)
+    const repoName = probotKit.getRepoName(context)
+    app.log("code push on",repoName,commitSha)
+
+    if (commitSha == "0000000000000000000000000000000000000000") {
+      return // branch deletion
+    }
+
+
+    const author = probotKit.getCommitAuthorName(context)
+    const branchName = probotKit.getBranchName(context)
+
+    app.log("commit by ",author," in branch ",branchName)
+
+    const repoPrefix = `${repoName}|${branchName}|${commitSha}`
+
+    for (const file of await probotKit.currentCommitFiles(context)) {
+      const filePath = `${repoPrefix}|${file.filename}`
+      app.log("changed ",filePath)
+    }
+    return
+  })
+
   // For more information on building apps:
   // https://probot.github.io/docs/
 
@@ -69,11 +52,33 @@ module.exports = app => {
 		// Authenticate the application and get all of its installations
 		const githubApp = await app.auth();
 		const installations = await githubApp.apps.listInstallations();
-    console.log(installations);
+    installations.data.forEach(async ({ id }) => {
+			const github = await app.auth(id);
+      var repositories = await repos.list(github)
+      var r = repositories
+        .filter(repository => !! repository)
+        .filter(({ archived }) => !archived)
+        .filter(({ fork }) => !fork)
+        .map(({ name, owner, clone_url }) => {
 
-    // now do whatever you want to do with the existing installations, including auth etc
+        // now do whatever you want to do with the existing installations, including auth etc
+         return {
+           orgId: id,
+           name: name,
+           owner: owner.login,
+           remoteURI: clone_url,
+         };
+      });
 
-	};
-
-  refresh();
+      repositories.forEach(async ({ name, owner }) => {
+        const reference = await github.gitdata.getReference({
+          owner: owner.login, // the owner of the repo
+          repo: name,  // the repo
+          ref: 'heads/master'
+        });
+        app.log.debug(name,reference.data.object.sha)
+      });
+    });
+  };
+  //refresh();
 }
